@@ -1,0 +1,101 @@
+from typing import List
+
+from fastapi import APIRouter, HTTPException, Query
+from odmantic import ObjectId
+
+from ..db.db_utils import (
+    check_qr_unique,
+    find_not_shipped_pack_by_qr,
+    get_batch_by_number_or_return_last,
+    get_by_id_or_404,
+    get_many_by_qr_or_404,
+    get_packs_queue,
+    get_upper_aggregation_levels_by_pack_id,
+)
+from ..db.engine import engine
+from ..models.id_model import IdModel
+from ..models.pack import Pack, PackOutput, PackPatchSchema
+from ..utils.naive_current_datetime import get_naive_datetime
+from .custom_routers import DeepLoggerRoute, LightLoggerRoute
+
+deep_logger_router = APIRouter(route_class=DeepLoggerRoute)
+light_logger_router = APIRouter(route_class=LightLoggerRoute)
+
+
+@light_logger_router.get("/packs_queue", response_model=List[PackOutput])
+async def get_current_packs():
+    packs_queue = await get_packs_queue()
+    return packs_queue
+
+
+@light_logger_router.get("/packs/{id}", response_model=Pack)
+async def get_pack_by_id(id: ObjectId):
+    pack = await get_by_id_or_404(Pack, id)
+    return pack
+
+
+@light_logger_router.get("/packs/", response_model=List[PackOutput])
+async def get_pack_by_qr(qr: str = Query(None)):
+    packs = await get_many_by_qr_or_404(Pack, qr)
+    return packs
+
+
+@light_logger_router.get("/not_shipped_pack/", response_model=Pack)
+async def get_not_shipped_pack_by_qr(qr: str = Query(None)):
+    pack = await find_not_shipped_pack_by_qr(qr)
+    return pack
+
+
+@deep_logger_router.put("/packs", response_model=Pack)
+async def create_pack(pack: Pack):
+    batch = await get_batch_by_number_or_return_last(batch_number=pack.batch_number)
+
+    if not await check_qr_unique(Pack, pack.qr):
+        raise HTTPException(
+            400, detail=f"Пачка с QR-кодом {pack.qr} уже есть в системе"
+        )
+
+    pack.batch_number = batch.number
+    pack.created_at = await get_naive_datetime()
+    await engine.save(pack)
+    return pack
+
+
+@light_logger_router.get("/packs/unique/")
+async def check_pack_qr_unique(qr: str = Query(None)):
+    unique = await check_qr_unique(Pack, qr)
+    return {"unique": unique}
+
+
+@light_logger_router.get("/packs/{id}/multipack_and_cube", response_model=IdModel)
+async def get_multipack_and_cube_ids_by_pack_id(id: ObjectId) -> IdModel:
+    ids = await get_upper_aggregation_levels_by_pack_id(id)
+    return ids
+
+
+@deep_logger_router.delete("/packs/{id}", response_model=Pack)
+async def delete_pack_by_id(id: ObjectId):
+    pack = await get_by_id_or_404(Pack, id)
+    await engine.delete(pack)
+    return pack
+
+
+@deep_logger_router.patch("/packs/{id}", response_model=Pack)
+async def update_pack_by_id(id: ObjectId, patch: PackPatchSchema):
+    pack = await get_by_id_or_404(Pack, id)
+
+    if patch.qr:
+        if not await check_qr_unique(Pack, patch.qr):
+            raise HTTPException(
+                400, detail=f"Пачка с QR-кодом {patch.qr} уже есть в системе"
+            )
+
+        if patch.to_process is not False:
+            patch.to_process = True
+
+        pack.comments.append(f"QR был изменен с {pack.qr}")
+    patch_dict = patch.dict(exclude_unset=True)
+    for name, value in patch_dict.items():
+        setattr(pack, name, value)
+    await engine.save(pack)
+    return pack

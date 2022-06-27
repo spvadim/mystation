@@ -1,0 +1,135 @@
+variables:
+  PROD_VERSION: 0.9.1
+  dockerTag: '$CI_BUILD_REF'
+  DOCKER_REPO: v3.devmhelper.ru:5000
+#  IMAGE_BNAME_NGINX: workstation_nginx
+  
+  IMAGE_BNAME: gitlab.tn.ru:5000/xps/axon/wrkst/
+  IMG_ARRAY: "frontend worker-dashboard backend worker mongo redis cron"
+  
+#  DATE4BUILD: '2021-12-15'
+  STAGE_SERVER: 62.76.72.47
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+ 
+
+image: docker:stable
+
+stages:
+  - build
+  - test
+  - r12n
+  - dp2stage
+
+services:
+  - docker:dind
+
+cache:
+  paths:
+    - .cache/pip
+
+before_script:
+# comment from this line
+#  - 'which ssh-agent || ( apt-get update -y && apt-get install openssh-client -y )'
+#  - mkdir -p ~/.ssh
+#  - echo "$STAGE_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+#  - cat ~/.ssh/id_rsa
+#  - chmod 700 ~/.ssh/id_rsa
+#  - eval "$(ssh-agent -s)"
+#  - ssh-add ~/.ssh/id_rsa
+#  - ssh-keyscan -t rsa $STAGE_SERVER > ~/.ssh/known_hosts
+#  - echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config
+#  - chmod 644 ~/.ssh/known_hosts
+# comment to this line
+# prevent making authorization to stage server
+
+#
+#  - apt-get update -y && apt-get install py-pip python3-dev libffi-dev openssl-dev gcc libc-dev make
+#  - python -m pip install --upgrade pip
+#
+  - apk update 
+  - apk add py-pip python3-dev libffi-dev openssl-dev gcc libc-dev make
+  - pip install --upgrade pip
+  - pip install docker-compose
+#
+  - export DATE4BUILD=$(date "+%F_%H-%M")
+
+
+BuildImg:
+  stage: build
+  tags:
+    - wst1
+  script:
+    - COMPOSE_DOCKER_CLI_BUILD=1 DOCKER_BUILDKIT=1 docker-compose build
+    - docker images
+  only:
+    refs:
+      - main
+
+Test:
+  stage: test
+  tags:
+    - wst1
+  script:
+    - docker images # | grep workstation_dashboard
+  only:
+    refs:
+      - main
+
+    
+RecordImg:
+#  variables:
+#    DATE4BUILD: $(date "+%F_%H-%M_")
+#    RELEASE_IMAGE_NGINX: $DOCKER_REPO/$IMAGE_BNAME_NGINX:latest
+  stage: r12n
+  tags:
+    - wst1
+  script:
+#        docker tag $IMAGE_BNAME$i $DOCKER_REPO/$i:${DATE4BUILD}_$CI_BUILD_REF
+#        echo $DOCKER_REPO/$i:${DATE4BUILD}_$CI_BUILD_REF
+#        docker push $DOCKER_REPO/$i:${DATE4BUILD}_$CI_BUILD_REF
+#        docker tag $IMAGE_BNAME$i $DOCKER_REPO/$i:latest
+#        docker push $DOCKER_REPO/$i:latest
+    - >
+      for i in ${IMG_ARRAY}; do
+        echo $CI_REGISTRY/$CI_PROJECT_PATH
+        docker login -u gitlab-ci-token -p $CI_BUILD_TOKEN $CI_REGISTRY/$CI_PROJECT_PATH
+        cat /root/.docker/config.json
+        docker tag $IMAGE_BNAME$i $CI_REGISTRY/$CI_PROJECT_PATH/$i:${DATE4BUILD}_$CI_BUILD_REF
+        echo $CI_REGISTRY/$CI_PROJECT_PATH/$i:${DATE4BUILD}_$CI_BUILD_REF
+        docker push $CI_REGISTRY/$CI_PROJECT_PATH/$i:${DATE4BUILD}_$CI_BUILD_REF
+        docker tag $IMAGE_BNAME$i $CI_REGISTRY/$CI_PROJECT_PATH/$i:latest
+        docker push $CI_REGISTRY/$CI_PROJECT_PATH/$i:latest
+      done
+  only:
+    refs:
+      - main
+      
+## r12n workstation_nginx 
+##    - docker tag $IMAGE_BNAME_NGINX $DOCKER_REPO/$IMAGE_BNAME_NGINX:${PROD_VERSION}_$(echo $CI_BUILD_REF | cut -c 1-8)
+##    - echo $DOCKER_REPO/$IMAGE_BNAME_NGINX:${PROD_VERSION}_$(echo $CI_BUILD_REF | cut -c 1-8 )
+##    - docker push $DOCKER_REPO/$IMAGE_BNAME_NGINX:${PROD_VERSION}_$(echo $CI_BUILD_REF | cut -c 1-8 )
+#
+#    - docker tag $IMAGE_BNAME_NGINX $DOCKER_REPO/$IMAGE_SHORT_NGINX:$CI_BUILD_REF
+#    - echo $DOCKER_REPO/$IMAGE_SHORT_NGINX:$CI_BUILD_REF
+#    - docker push $DOCKER_REPO/$IMAGE_SHORT_NGINX:$CI_BUILD_REF
+#
+##    - docker tag $IMAGE_BNAME_NGINX $RELEASE_IMAGE_NGINX 
+##    - docker push $RELEASE_IMAGE_NGINX      
+
+
+Deploy2stage:
+   variables:     
+#      RELEASE_IMAGE_NGINX: $DOCKER_REPO/$IMAGE_SHORT_NGINX:$CI_BUILD_REF
+      RELEASE_IMAGE_NGINX: $CI_REGISTRY/$CI_PROJECT_PATH/$IMAGE_SHORT_NGINX:$CI_BUILD_REF
+   stage: dp2stage
+   tags:
+     - wst1
+   script:
+     - echo pass
+#     - ssh root@$STAGE_SERVER  "docker pull $RELEASE_IMAGE_NGINX"
+   only:
+    refs:
+      - main
+
+
+       

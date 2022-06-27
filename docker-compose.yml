@@ -1,0 +1,87 @@
+version: '3.7'
+services:
+    mongo:
+        container_name: mongo
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/mongo
+        build: ./mongo
+        env_file:
+            - .env
+        volumes:
+            - db:/data/db
+            - ./mongo/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+        ports:
+            - 27017:27017
+
+    docker-fastapi:
+        container_name: docker-fastapi
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/backend
+        build: ./backend/
+        env_file:
+            - .env
+        depends_on:
+            - mongo
+        volumes:
+            - ./logs:/app/logs
+        restart: always
+
+    nginx:
+        container_name: proxy-app
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/frontend
+        build: ./frontend/
+        depends_on:
+            - docker-fastapi
+        volumes:
+            - ./swagger-static:/swagger-static
+        ports:
+            - 80:80
+            - 443:443
+        stdin_open: true
+        tty: true
+        restart: always
+
+    worker:
+        container_name: worker
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/worker
+        build: ./backend/
+        command: celery -A app.worker worker -l info --concurrency=1
+        environment:
+            - PLC_CONNECT=true
+        env_file:
+            - .env
+        depends_on:
+            - docker-fastapi
+            - redis
+
+    redis:
+        container_name: redis
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/redis
+        build: ./redis/
+        command: redis-server /usr/local/etc/redis/redis.conf
+        volumes:
+            - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+        ports:
+            - 6379:6379
+
+    dashboard:
+        container_name: dashboard
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/worker-dashboard
+        build: ./backend/
+        command: celery -A app.worker --broker=redis://redis:6379/0 flower --port=5555
+        ports:
+            - 5556:5555
+        env_file:
+            - .env
+        depends_on:
+            - docker-fastapi
+            - redis
+            - worker
+
+    cron:
+        container_name: cron
+        image: gitlab.tn.ru:5000/xps/axon/wrkst/cron
+        build: ./cron/
+        volumes:
+            - ./logs/:/logs
+
+volumes:
+    db: { }
