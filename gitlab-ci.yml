@@ -6,6 +6,7 @@
 # Build a Docker image with CI/CD and push to the GitLab registry.
 # Docker-in-Docker documentation: https://docs.gitlab.com/ee/ci/docker/using_docker_build.html
 #
+#
 # This template uses one generic job with conditional builds
 # for the default branch and all other (MR) branches.
 
